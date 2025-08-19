@@ -10,8 +10,8 @@ def seconds_to_mmss(sec: int) -> str:
 class QuizTimerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("ZIMER - Exam Time Divider")
-        self.geometry("560x380")
+        self.title("XIMER - Exam Time Divider")
+        self.geometry("600x440")
         self.resizable(False, False)
 
         self.running = False
@@ -21,6 +21,13 @@ class QuizTimerApp(tk.Tk):
         self.total_questions = 0
         self.current_question_idx = 0
         self.current_question_remaining = 0
+        self.current_question_initial = 0
+
+        self.flash_colors = ["#ef4444", "#22c55e"]
+        self.flash_index = 0
+        self.flashing = False
+        self.flash_job = None
+        self.flash_rate_ms = 200
 
         frm_top = ttk.Frame(self, padding=12)
         frm_top.pack(fill="x")
@@ -39,13 +46,10 @@ class QuizTimerApp(tk.Tk):
         frm_buttons.pack(fill="x")
         self.btn_start = ttk.Button(frm_buttons, text="Start", command=self.start)
         self.btn_start.grid(row=0, column=0, padx=4, pady=8, sticky="w")
-
         self.btn_pause = ttk.Button(frm_buttons, text="Pause ⏸", command=self.toggle_pause, state="disabled")
         self.btn_pause.grid(row=0, column=1, padx=4, pady=8, sticky="w")
-
         self.btn_finish = ttk.Button(frm_buttons, text="Finished this question ✓", command=self.finish_question, state="disabled")
         self.btn_finish.grid(row=0, column=2, padx=4, pady=8, sticky="w")
-
         self.btn_reset = ttk.Button(frm_buttons, text="Reset", command=self.reset_app)
         self.btn_reset.grid(row=0, column=3, padx=4, pady=8, sticky="w")
 
@@ -53,7 +57,7 @@ class QuizTimerApp(tk.Tk):
         frm_disp.pack(fill="both", expand=True)
 
         self.lbl_q = ttk.Label(frm_disp, text="Question: -/-", font=("Arial", 14, "bold"))
-        self.lbl_q.pack(anchor="center", pady=(8,8))
+        self.lbl_q.pack(anchor="center", pady=(8,6))
 
         self.lbl_paused = ttk.Label(frm_disp, text="", foreground="#b35c00", font=("Arial", 11, "italic"))
         self.lbl_paused.pack(anchor="center", pady=(0,6))
@@ -74,13 +78,61 @@ class QuizTimerApp(tk.Tk):
             text="This program divides exam time across questions.\nIf a question's time runs out without answering, it will subtract from the rest.",
             foreground="#555"
         )
-        self.lbl_hint.pack(anchor="w", pady=6)
+        self.lbl_hint.pack(anchor="w", pady=(4,6))
 
-        self.progress = ttk.Progressbar(frm_disp, mode="determinate")
-        self.progress.pack(fill="x", pady=(6, 12))
+        ttk.Label(frm_disp, text="Question progress:", font=("Arial", 11)).pack(anchor="w", pady=(2,2))
+        self.q_canvas = tk.Canvas(frm_disp, height=16, bg="#0b1024", highlightthickness=0)
+        self.q_canvas.pack(fill="x", pady=(0,10))
+        self.q_bg = None
+        self.q_fg = None
 
         self.after_id = None
         self.bind("<space>", lambda e: self.toggle_pause() if self.btn_pause["state"] == "normal" else None)
+
+        self.update_idletasks()
+        self._init_q_progress_bar()
+
+    def _init_q_progress_bar(self):
+        w = self.q_canvas.winfo_width() or 560
+        self.q_canvas.delete("all")
+        self.q_bg = self.q_canvas.create_rectangle(2, 2, w-2, 14, fill="#1f2937", outline="#111827")
+        self.q_fg = self.q_canvas.create_rectangle(2, 2, 2, 14, fill="#22c55e", outline="")
+
+    def _update_q_progress_bar(self, pct, negative=False):
+        w = self.q_canvas.winfo_width() or 560
+        if negative:
+            self.q_canvas.coords(self.q_fg, 2, 2, w-2, 14)
+            self._stop_flashing()
+            self.q_canvas.itemconfig(self.q_fg, fill="#ef4444")
+            return
+        pct = max(0, min(100, int(pct)))
+        fill_w = 2 + int((w-4) * (pct/100))
+        self.q_canvas.coords(self.q_fg, 2, 2, fill_w, 14)
+        if pct <= 10:
+            self._start_flashing()
+        else:
+            self._stop_flashing()
+
+    def _start_flashing(self):
+        if self.flashing:
+            return
+        self.flashing = True
+        self._flash_step()
+
+    def _stop_flashing(self):
+        self.flashing = False
+        if self.flash_job:
+            self.after_cancel(self.flash_job)
+            self.flash_job = None
+        if self.q_fg is not None:
+            self.q_canvas.itemconfig(self.q_fg, fill="#22c55e")
+
+    def _flash_step(self):
+        if not self.flashing:
+            return
+        self.flash_index = (self.flash_index + 1) % len(self.flash_colors)
+        self.q_canvas.itemconfig(self.q_fg, fill=self.flash_colors[self.flash_index])
+        self.flash_job = self.after(self.flash_rate_ms, self._flash_step)
 
     def reset_app(self):
         if self.after_id:
@@ -93,14 +145,16 @@ class QuizTimerApp(tk.Tk):
         self.total_questions = 0
         self.current_question_idx = 0
         self.current_question_remaining = 0
+        self.current_question_initial = 0
         self.lbl_q.config(text="Question: -/-")
         self.lbl_total.config(text="00:00")
         self.lbl_question.config(text="00:00")
-        self.progress["value"] = 0
         self.lbl_paused.config(text="")
         self.btn_finish.config(state="disabled")
         self.btn_pause.config(state="disabled", text="Pause ⏸")
         self.btn_start.config(state="normal")
+        self._stop_flashing()
+        self._update_q_progress_bar(0)
 
     def start(self):
         try:
@@ -117,6 +171,7 @@ class QuizTimerApp(tk.Tk):
         self.total_questions = questions
         self.current_question_idx = 1
         self.current_question_remaining = self.allocate_for_remaining_questions()
+        self.current_question_initial = max(1, self.current_question_remaining)
 
         self.running = True
         self.paused = False
@@ -153,9 +208,10 @@ class QuizTimerApp(tk.Tk):
             self.refresh_labels()
             messagebox.showinfo("Done", "All questions finished. Good luck!")
             return
-
         self.current_question_idx += 1
         self.current_question_remaining = self.allocate_for_remaining_questions()
+        self.current_question_initial = max(1, self.current_question_remaining)
+        self._stop_flashing()
         self.refresh_labels()
 
     def tick(self):
@@ -171,11 +227,12 @@ class QuizTimerApp(tk.Tk):
         self.lbl_q.config(text=f"Question: {self.current_question_idx}/{self.total_questions if self.total_questions else '-'}")
         self.lbl_total.config(text=seconds_to_mmss(self.total_remaining))
         self.lbl_question.config(text=seconds_to_mmss(self.current_question_remaining))
-        if self.total_seconds_initial > 0:
-            pct = max(0, min(100, int((self.total_remaining / self.total_seconds_initial) * 100)))
-            self.progress["value"] = pct
+        if self.current_question_initial > 0:
+            pct_q = (self.current_question_remaining / self.current_question_initial) * 100
         else:
-            self.progress["value"] = 0
+            pct_q = 0
+        negative = self.current_question_remaining < 0
+        self._update_q_progress_bar(pct_q, negative=negative)
 
 if __name__ == "__main__":
     app = QuizTimerApp()
